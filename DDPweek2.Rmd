@@ -1,0 +1,99 @@
+---
+title: "Data Products week 2"
+date: "September 1, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## List of countries by intentional death rate.
+
+You will find here an interactive map for yearly intentional deaths per capita according to a Wiki page: [link](https://en.wikipedia.org/wiki/List_of_countries_by_intentional_death_rate).
+
+```{r, echo=F,warning=FALSE}
+loadlibs = function(){
+library(leaflet)
+library(XML)
+library(RCurl)
+library(rlist)
+library(data.table)
+library(magrittr)
+library(sp)
+library(maps)
+library(maptools)
+}
+suppressPackageStartupMessages(loadlibs())
+options(stringsAsFactors = F)
+
+#getting data
+theurl <- getURL("https://en.wikipedia.org/wiki/List_of_countries_by_intentional_death_rate",.opts = list(ssl.verifypeer = FALSE) )
+tables <- readHTMLTable(theurl,header = T)
+tables <- list.clean(tables, fun = is.null, recursive = FALSE)
+idpcpy = tables[[1]]
+
+#formating 
+idpcpy %>% setDT()
+names(idpcpy) %<>% trimws()
+for (j in names(idpcpy)){
+  set(idpcpy,i=NULL, j=j, value = gsub("[+[(].*","",idpcpy[[j]]) %>% trimws()  )}
+cols = names(idpcpy)[-2]
+for (j in cols){
+  set(idpcpy,i=NULL, j=j, value = as.numeric(idpcpy[[j]])  )
+}
+
+
+#getting spatial data for countries
+world <- map("world", fill=TRUE, plot=FALSE)
+world_map <- map2SpatialPolygons(world, sub(":.*$", "", world$names))
+world_map <- SpatialPolygonsDataFrame(world_map,
+                                      data.frame(country=names(world_map), 
+                                                 stringsAsFactors=FALSE), 
+                                      FALSE)
+
+# countries with different spellings in each dataset
+  #idpcpy$Country[!(idpcpy$Country %in% world_map$country)]
+
+#ok those are big ones
+idpcpy$Country %<>% gsub("United States","USA",.) %>% gsub("United Kingdom","UK",.)
+#reorder data so orders in spatial data in data with numbers were the same
+#for proper labeling
+
+target <- subset(world_map, country %in% idpcpy$Country)
+idpcpy[,cntry:=tolower(Country)]
+setorder(idpcpy,cntry)
+idpcpySub <- idpcpy[ Country %in% target$country,]
+
+#Making map
+bins <- c(0, 5, 10, 20, 30, 40, Inf)
+pal <- colorBin("YlOrRd", domain = idpcpySub$`Intentional Death`, bins = bins)
+
+labels <- sprintf(
+  "<strong>%s<br/>Rank %s</strong><br/>%g deaths per 100k inhabitats</sup>",
+  idpcpySub$Country,idpcpySub$`Rank`, idpcpySub$`Intentional Death`
+) %>% lapply(htmltools::HTML)
+
+leaflet(target) %>% 
+  addTiles() %>% 
+addPolygons(
+  fillColor = ~pal(idpcpySub$`Intentional Death`),
+  weight = 2,
+  opacity = 1,
+  color = "white",
+  dashArray = "3",
+  fillOpacity = 0.7,
+  highlight = highlightOptions(
+    weight = 5,
+    color = "#666",
+    dashArray = "",
+    fillOpacity = 0.7,
+    bringToFront = TRUE),
+  label = labels,
+  labelOptions = labelOptions(
+    style = list("font-weight" = "normal", padding = "3px 8px"),
+    textsize = "15px",
+    direction = "auto")) %>%
+  addLegend(pal = pal, values = ~idpcpySub$`Intentional Death`, opacity = 0.7, title = "Cases per 100,000<br/>inhabitats per year",
+            position = "bottomright")
+```
